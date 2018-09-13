@@ -230,16 +230,23 @@ FFMPEG_DISTS='
 : ${PATH_SEP:=':'}
 
 # these two can be set to always be included regardless of overrides
-REQUIRED_CONFIGURE_ARGS="$REQUIRED_CONFIGURE_ARGS"
-REQUIRED_CMAKE_ARGS="$REQUIRED_CMAKE_ARGS"
+REQUIRED_CONFIGURE_ARGS="$REQUIRED_CONFIGURE_ARGS --prefix=/usr --sysconfdir=/etc"
 
-CONFIGURE_ARGS="$CONFIGURE_ARGS --disable-shared --enable-static --prefix=/usr"
+REQUIRED_CMAKE_ARGS="$REQUIRED_CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_FULL_SYSCONFDIR=/etc"
+
+CONFIGURE_ARGS="$CONFIGURE_ARGS --disable-shared --enable-static"
 
 CMAKE_BASE_ARGS="$CMAKE_BASE_ARGS -DBUILD_SHARED_LIBS=NO -DENABLE_SHARED=NO -DCMAKE_PREFIX_PATH:FILEPATH=\"\$CMAKE_PREFIX_PATH\" -DCMAKE_BUILD_TYPE=Release"
 
-CMAKE_ARGS="$CMAKE_BASE_ARGS $CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=/usr"
+CMAKE_ARGS="$CMAKE_BASE_ARGS $CMAKE_ARGS"
 
-MESON_ARGS="--prefix /usr --buildtype release --default-library static -Dintrospection=false"
+MESON_ARGS="--prefix /usr --sysconfdir /etc --buildtype release --default-library static -Dintrospection=false "
+
+if [ -z "$target_os" ] && [ "$os" = linux ] && [ "$bits" = 64 ]; then
+    REQUIRED_CONFIGURE_ARGS="$REQUIRED_CONFIGURE_ARGS --libdir=/usr/lib64"
+    MESON_ARGS="$MESON_ARGS --libdir /usr/lib64"
+    CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_INSTALL_RPATH=/usr/lib64 -DCMAKE_INSTALL_LIBDIR=/usr/lib64"
+fi
 
 DIST_PATCHES=$DIST_PATCHES'
     docbook2x       https://gist.githubusercontent.com/rkitover/0b5dcc95a0703a9b0e0e7eb6d325a98e/raw/e256d2fad8d19633ac8abe02a0d1e119063d1fd9/docbook2x.patch
@@ -321,9 +328,9 @@ DIST_POST_CONFIGURE="$DIST_POST_CONFIGURE
 "
 
 DIST_CONFIGURE_OVERRIDES="$DIST_CONFIGURE_OVERRIDES
-    openssl     ./config no-shared --prefix=/usr --openssldir=/etc/ssl
-    cmake       ./configure --prefix=/usr --no-qt-gui --parallel=\$NUM_CPUS --enable-ccache
-    zlib        ./configure --static --prefix=/usr
+    openssl     ./config no-shared $REQUIRED_CONFIGURE_ARGS --openssldir=/etc/ssl
+    cmake       ./configure $REQUIRED_CONFIGURE_ARGS --no-qt-gui --parallel=\$NUM_CPUS --enable-ccache
+    zlib        ./configure $REQUIRED_CONFIGURE_ARGS --static
     XML-SAX     echo no | PERL_MM_USE_DEFAULT=0 perl Makefile.PL
     wxwidgets   ./configure $REQUIRED_CONFIGURE_ARGS --disable-shared --prefix=/usr --enable-stl --disable-precomp-headers --enable-cxx11 --enable-permissive --with-opengl --with-libpng
 "
@@ -359,7 +366,7 @@ DIST_ARGS="$DIST_ARGS
     libxslt     --without-python --without-crypto
     libgd       --without-xpm
     fontconfig  --with-baseconfigdir=/etc/fonts
-    graphviz    --disable-ltdl --without-x CFLAGS=\"-include \$PWD/declspec.h $CFLAGS\"
+    graphviz    --disable-ltdl --without-x --disable-swig CFLAGS=\"-include \$PWD/declspec.h $CFLAGS\"
     python2     --with-ensurepip --with-system-expat
     python3     --with-ensurepip --with-system-expat
     glib        --with-libiconv=gnu
