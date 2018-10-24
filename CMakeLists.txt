@@ -686,7 +686,7 @@ set(HDR_FILTERS
     src/filters/hq2x.h
     src/filters/interp.h
     src/filters/lq2x.h
-    src/filters/xBRZ/config.h
+    src/filters/xBRZ/xbrz_config.h
     src/filters/xBRZ/xbrz.h
 )
 
