@@ -251,6 +251,15 @@ uint32_t systemReadJoypad(int joy)
     if (turbo)
         ret |= KEYM_SPEED;
 
+    if (ret & KEYM_SPEED) {
+        if (speedup_max) {
+            ret &= ~KEYM_SPEED;
+            soundSetThrottle(speedup_max);
+        }
+    }
+    else
+        soundSetThrottle(throttle);
+
     uint32_t af = autofire;
 
     if (ret & KEYM_AUTO_A) {

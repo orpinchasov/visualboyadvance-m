@@ -2297,6 +2297,149 @@ public:
     }
 } throttle_ctrl;
 
+// manage speedup key spinctrl/canned setting choice interaction
+// this is a copy of the throttle code above
+static class SpeedupCtrl_t : public wxEvtHandler {
+public:
+    wxSpinCtrl* speedup;
+    wxChoice* speedupsel;
+
+    // set speedupsel from speedup
+    void SetSpeedupSel(wxSpinEvent& evt)
+    {
+        DoSetSpeedupSel(speedup->GetValue());
+    }
+
+    void DoSetSpeedupSel(int val)
+    {
+        switch (val) {
+        case 0:
+            speedupsel->SetSelection(1);
+            break;
+
+        case 25:
+            speedupsel->SetSelection(2);
+            break;
+
+        case 50:
+            speedupsel->SetSelection(3);
+            break;
+
+        case 100:
+            speedupsel->SetSelection(4);
+            break;
+
+        case 150:
+            speedupsel->SetSelection(5);
+            break;
+
+        case 200:
+            speedupsel->SetSelection(6);
+            break;
+
+        case 400:
+            speedupsel->SetSelection(7);
+            break;
+
+        case 800:
+            speedupsel->SetSelection(8);
+            break;
+
+        case 1000:
+            speedupsel->SetSelection(9);
+            break;
+
+        case 3000:
+            speedupsel->SetSelection(10);
+            break;
+
+        case 5000:
+            speedupsel->SetSelection(11);
+            break;
+
+        case 8000:
+            speedupsel->SetSelection(12);
+            break;
+
+        case 9000:
+            speedupsel->SetSelection(13);
+            break;
+
+        default:
+            speedupsel->SetSelection(0);
+            break;
+        }
+    }
+
+    // set speedup from speedupsel
+    void SetSpeedup(wxCommandEvent& evt)
+    {
+        switch (speedupsel->GetSelection()) {
+        case 0: // blank; leave it alone
+            break;
+
+        case 1:
+            speedup->SetValue(0);
+            break;
+
+        case 2:
+            speedup->SetValue(25);
+            break;
+
+        case 3:
+            speedup->SetValue(50);
+            break;
+
+        case 4:
+            speedup->SetValue(100);
+            break;
+
+        case 5:
+            speedup->SetValue(150);
+            break;
+
+        case 6:
+            speedup->SetValue(200);
+            break;
+
+        case 7:
+            speedup->SetValue(400);
+            break;
+
+        case 8:
+            speedup->SetValue(800);
+            break;
+
+        case 9:
+            speedup->SetValue(1000);
+            break;
+
+        case 10:
+            speedup->SetValue(3000);
+            break;
+
+        case 11:
+            speedup->SetValue(5000);
+            break;
+
+        case 12:
+            speedup->SetValue(8000);
+            break;
+
+        case 13:
+            speedup->SetValue(9000);
+            break;
+
+        }
+    }
+
+    void Init(wxShowEvent& ev)
+    {
+        ev.Skip();
+        DoSetSpeedupSel(speedup_max);
+    }
+} speedup_ctrl;
+
 /////////////////////////////
 //Check if a pointer from the XRC file is valid. If it's not, throw an error telling the user.
 template <typename T>
@@ -3225,6 +3368,19 @@ bool MainFrame::BindControls()
                 NULL, &throttle_ctrl);
             d->Connect(wxEVT_SHOW, wxShowEventHandler(ThrottleCtrl_t::Init),
                 NULL, &throttle_ctrl);
+            d->Fit();
+
+            getsc("Speedup", speedup_max);
+            speedup_ctrl.speedup = sc;
+            speedup_ctrl.speedupsel = SafeXRCCTRL<wxChoice>(d, "SpeedupSel");
+            speedup_ctrl.speedup->Connect(wxEVT_COMMAND_SPINCTRL_UPDATED,
+                wxSpinEventHandler(SpeedupCtrl_t::SetSpeedupSel),
+                NULL, &speedup_ctrl);
+            speedup_ctrl.speedupsel->Connect(wxEVT_COMMAND_CHOICE_SELECTED,
+                wxCommandEventHandler(SpeedupCtrl_t::SetSpeedup),
+                NULL, &speedup_ctrl);
+            d->Connect(wxEVT_SHOW, wxShowEventHandler(SpeedupCtrl_t::Init),
+                NULL, &speedup_ctrl);
             d->Fit();
         }
 #define getcbbe(n, o) getbe(n, o, cb, wxCheckBox, CB)

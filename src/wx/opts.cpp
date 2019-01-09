@@ -253,6 +253,7 @@ opt_desc opts[] = {
     INTOPT("preferences/skipSaveGameCheats", "", wxTRANSLATE("Do not overwrite cheat list when loading state"), skipSaveGameCheats, 0, 1),
     INTOPT("preferences/skipSaveGameBattery", "", wxTRANSLATE("Do not overwrite native (battery) save when loading state"), skipSaveGameBattery, 0, 1),
     INTOPT("preferences/throttle", "", wxTRANSLATE("Throttle game speed, even when accelerated (0-1000%, 0 = disabled)"), throttle, 0, 1000),
+    INTOPT("preferences/speedup_max", "", wxTRANSLATE("Set max game speed for speedup key (0-9000%, 0 = use old speedup method)"), speedup_max, 0, 9000),
     INTOPT("preferences/useBiosGB", "BootRomGB", wxTRANSLATE("Use the specified BIOS file for GB"), useBiosFileGB, 0, 1),
     INTOPT("preferences/useBiosGBA", "BootRomEn", wxTRANSLATE("Use the specified BIOS file"), useBiosFileGBA, 0, 1),
     INTOPT("preferences/useBiosGBC", "BootRomGBC", wxTRANSLATE("Use the specified BIOS file for GBC"), useBiosFileGBC, 0, 1),
