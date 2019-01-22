@@ -107,6 +107,10 @@ void StartLink(uint16_t siocnt)
 {
 }
 
+void SetLinkData(uint16_t siodata8)
+{
+}
+
 void CheckLinkConnection()
 {
 }

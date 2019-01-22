@@ -65,7 +65,7 @@ static void get_config_path(wxPathList& path, bool exists = true)
         wxLogDebug(wxT("GetDataDir(): %s"), stdp.GetDataDir().mb_str());
         wxLogDebug(wxT("GetLocalDataDir(): %s"), stdp.GetLocalDataDir().mb_str());
         wxLogDebug(wxT("GetPluginsDir(): %s"), stdp.GetPluginsDir().mb_str());
-        
+
         debug_dumped = true;
     }
 
@@ -933,6 +933,10 @@ void MainFrame::StopModal()
 
 LinkMode MainFrame::GetConfiguredLinkMode()
 {
+    // TODO orp: This is temporary to defer GUI handling to later
+
+    return LINK_ARDUINO;
+
     switch (gopts.gba_link_type) {
     case 0:
         return LINK_DISCONNECTED;

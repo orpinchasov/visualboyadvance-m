@@ -12,7 +12,8 @@ enum LinkMode {
     LINK_RFU_SOCKET,
     LINK_GAMECUBE_DOLPHIN,
     LINK_GAMEBOY_IPC,
-    LINK_GAMEBOY_SOCKET
+    LINK_GAMEBOY_SOCKET,
+    LINK_ARDUINO
 };
 
 /**
@@ -109,6 +110,13 @@ extern int GetLinkPlayerId();
  * @param siocnt the value of SIOCNT to be written
  */
 extern void StartLink(uint16_t siocnt);
+
+/**
+ * Set the data to be sent in transfer
+ *
+ * @param siodata8 the value of COMM_SIODATA8 (SIOMLT_SEND) to be written
+ */
+extern void SetLinkData(uint16_t siodata8);
 
 /**
  * Start a general purpose link transfer

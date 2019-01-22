@@ -3063,6 +3063,7 @@ void CPUUpdateRegister(uint32_t address, uint16_t value)
         break;
 
     case COMM_SIODATA8:
+        SetLinkData(value);
         UPDATE_REG(COMM_SIODATA8, value);
         break;
 #endif
