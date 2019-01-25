@@ -751,15 +751,15 @@ void StartGPLink(uint16_t value)
 {
     UPDATE_REG(COMM_RCNT, value);
 
-    if (!value)
-        return;
-
     switch (GetSIOMode(READ16LE(&ioMem[COMM_SIOCNT]), value)) {
     case MULTIPLAYER:
         value &= 0xc0f0;
-        value |= 3;
+        // Set SC, SD, SO - HIGH
+        value |= 0xb;
         if (linkid)
             value |= 4;
+
+        UPDATE_REG(COMM_RCNT, value);
         UPDATE_REG(COMM_SIOCNT, ((READ16LE(&ioMem[COMM_SIOCNT]) & 0xff8b) | (linkid ? 0xc : 8) | (linkid << 4)));
         break;
 
@@ -4216,19 +4216,18 @@ static ConnectionState InitArduino()
 
     COMMTIMEOUTS timeouts = {0};
     // TODO orp: Which values should I choose for timeouts if any?
-
+/*
     timeouts.ReadIntervalTimeout = MAXDWORD;
     timeouts.ReadTotalTimeoutConstant = 0;
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.WriteTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 0;
-    /*
-    timeouts.ReadIntervalTimeout = 10;
+    */
+    timeouts.ReadIntervalTimeout = 50;
     timeouts.ReadTotalTimeoutConstant = 0;
     timeouts.ReadTotalTimeoutMultiplier = 10;
     timeouts.WriteTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 10;
-    */
 
     if (SetCommTimeouts(serial, &timeouts) == 0) {
         CloseHandle(serial);
@@ -4256,10 +4255,35 @@ static void SendToArduino(char command, uint16_t value)
     DWORD bytes_written = 0;
     int rc = 0;
 
+    uint16_t in = value;
+
     uint8_t buffer[3] = {0};
 
     buffer[0] = (uint8_t)command;
     memcpy(&buffer[1], (char *)&value, sizeof(value));
+
+    unsigned char low, hi, tmp;
+
+    low = in & 0xff;
+    hi = (in >> 8) & 0xff;
+
+    if (low == 255) {
+        WriteFile(serial, (uint8_t *)&low, sizeof(low), &bytes_written, NULL);
+        tmp = 0;
+        WriteFile(serial, (uint8_t *)&tmp, sizeof(tmp), &bytes_written, NULL);
+    } else {
+        WriteFile(serial, (uint8_t *)&low, sizeof(low), &bytes_written, NULL);
+    }
+
+    if (hi == 255) {
+        WriteFile(serial, (uint8_t *)&hi, sizeof(hi), &bytes_written, NULL);
+        tmp = 0;
+        WriteFile(serial, (uint8_t *)&tmp, sizeof(tmp), &bytes_written, NULL);
+    } else {
+        WriteFile(serial, (uint8_t *)&hi, sizeof(hi), &bytes_written, NULL);
+    }
+
+    return;
 
     //if ((rc = WriteFile(serial, (uint8_t *)&buffer, sizeof(buffer), &bytes_written, NULL) == 0) ||
     if ((rc = WriteFile(serial, (uint8_t *)&value, sizeof(value), &bytes_written, NULL) == 0) ||
@@ -4321,7 +4345,7 @@ static void StartArduino(uint16_t value)
             tspeed = value & 3;
 
             SendToArduino(0, cable_data[0]);
-            Sleep(5);
+            Sleep(3);
 
             UPDATE_REG(COMM_SIOMULTI0, 0xffff);
             UPDATE_REG(COMM_SIOMULTI1, 0xffff);
@@ -4340,7 +4364,8 @@ static void StartArduino(uint16_t value)
 
         // TODO orp: I think that the following line is confusing. It should be
         // set for both master and slave. Currently it is, but by "chance".
-        value |= (!transfer_direction ? 1 : 0) << 7;
+        // TODO: Original - value |= (!transfer_direction ? 1 : 0) << 7;
+        value |= (start || arduino_sending ? 1 : 0) << 7;
         // TODO orp: If the slaves tell the master that it cannot send
         // because they are not ready then we don't have this feature.
         // There's currently no way for the slave to signal this to
@@ -4359,6 +4384,8 @@ static void StartArduino(uint16_t value)
             // SI is always low on master
             // SO, SC always low during transfer
             // not sure why SO low otherwise
+            // Original: UPDATE_REG(COMM_RCNT, transfer_direction ? 2 : 3);
+            //UPDATE_REG(COMM_RCNT, start || arduino_sending ? 2 : 3);
             UPDATE_REG(COMM_RCNT, transfer_direction ? 2 : 3);
 
         break;
@@ -4367,6 +4394,7 @@ static void StartArduino(uint16_t value)
     case NORMAL32:
     case UART:
     default:
+        printf("Went to a different communication mode: %04x\n", GetSIOMode(value, READ16LE(&ioMem[COMM_RCNT])));
         // TODO orp: it seems that here I need to cancel the communciation mode.
         // I could possibly set SD to low here.
         UPDATE_REG(COMM_SIOCNT, value);
@@ -4436,10 +4464,10 @@ static void UpdateArduino(int ticks)
             } else {
                 // TODO orp: This is the current error handling. We might need
                 // to make this smarter.
-                cable_data[1] = 0xffff;
-                UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x40);
+                //cable_data[1] = 0xffff;
+                //UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x40);
                 //linktime = trtimedata[0][tspeed];
-                //return;
+                return;
                 // TODO orp: consider error handling (for the GBA)
             }
             //printf("receive: %04x\n", cable_data[1]);
