@@ -543,7 +543,10 @@ static char linkevent[] =
 #endif
     "VBA link event  ";
 static HANDLE serial = 0;
+int transfer_state = 0;
 static bool arduino_sending = false;
+static bool done = true;
+static bool last_transfer_failed = false;
 
 inline static int GetSIOMode(uint16_t siocnt, uint16_t rcnt)
 {
@@ -4203,7 +4206,7 @@ static ConnectionState InitArduino()
         return LINK_ERROR;
     }
 
-    params.BaudRate = CBR_115200;  // Setting BaudRate = 115200
+    params.BaudRate = CBR_256000;  // Setting BaudRate = 115200
     params.ByteSize = 8;           // Setting ByteSize = 8
     params.StopBits = ONESTOPBIT;  // Setting StopBits = 1
     params.Parity   = NOPARITY;    // Setting Parity = None
@@ -4222,12 +4225,12 @@ static ConnectionState InitArduino()
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.WriteTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 0;
-    */
-    timeouts.ReadIntervalTimeout = 50;
+*/
+    timeouts.ReadIntervalTimeout = 10;
     timeouts.ReadTotalTimeoutConstant = 0;
-    timeouts.ReadTotalTimeoutMultiplier = 10;
+    timeouts.ReadTotalTimeoutMultiplier = 5;
     timeouts.WriteTotalTimeoutConstant = 0;
-    timeouts.WriteTotalTimeoutMultiplier = 10;
+    timeouts.WriteTotalTimeoutMultiplier = 5;
 
     if (SetCommTimeouts(serial, &timeouts) == 0) {
         CloseHandle(serial);
@@ -4246,26 +4249,23 @@ static ConnectionState InitArduino()
 
     printf("Serial opened\n");
 
+    uint16_t value = 0;
+    DWORD bytes_read = 0;
+    // TODO: I don't know why you have to read a couple of bytes from
+    // the serial after opening it.
+    ReadFile(serial, (uint8_t *)&value, sizeof(value), &bytes_read, NULL);
+
     return LINK_OK;
 }
 
 // TODO orp: define enums for these commands
-static void SendToArduino(char command, uint16_t value)
+static void SendToArduino2(char command, uint16_t value)
 {
-    DWORD bytes_written = 0;
-    int rc = 0;
-
-    uint16_t in = value;
-
-    uint8_t buffer[3] = {0};
-
-    buffer[0] = (uint8_t)command;
-    memcpy(&buffer[1], (char *)&value, sizeof(value));
-
     unsigned char low, hi, tmp;
+    DWORD bytes_written = 0;
 
-    low = in & 0xff;
-    hi = (in >> 8) & 0xff;
+    low = value & 0xff;
+    hi = (value >> 8) & 0xff;
 
     if (low == 255) {
         WriteFile(serial, (uint8_t *)&low, sizeof(low), &bytes_written, NULL);
@@ -4282,14 +4282,13 @@ static void SendToArduino(char command, uint16_t value)
     } else {
         WriteFile(serial, (uint8_t *)&hi, sizeof(hi), &bytes_written, NULL);
     }
+}
 
-    return;
+static void SendToArduino(char command, uint16_t value)
+{
+    DWORD bytes_written = 0;
 
-    //if ((rc = WriteFile(serial, (uint8_t *)&buffer, sizeof(buffer), &bytes_written, NULL) == 0) ||
-    if ((rc = WriteFile(serial, (uint8_t *)&value, sizeof(value), &bytes_written, NULL) == 0) ||
-        (bytes_written != sizeof(value))) {
-        fprintf(stderr, "Error writing bytes to serial (rc=%d, bytes written=%d, error=%d)\n", rc, bytes_written, GetLastError());
-    }
+    WriteFile(serial, (uint8_t *)&value, sizeof(value), &bytes_written, NULL);
 }
 
 bool ReceiveFromArduino(uint16_t *out)
@@ -4305,6 +4304,7 @@ bool ReceiveFromArduino(uint16_t *out)
             // TODO orp: even though timeout might be the actual error from
             // the readfile it doesn't return as such from the function.
             //fprintf(stderr, "Error reading bytes from serial (rc=%d, bytes read=%d, error=%d)\n", rc, bytes_read, dw);
+            //printf("timeout");
         }
 
         return false;
@@ -4327,10 +4327,15 @@ static void StartArduino(uint16_t value)
         //printf("transfer_direction=%s\n", !transfer_direction ? "sending" : "receiving");
         //printf("start transfer=%s\n", value & 0x80 ? "true" : "false");
         // Start if master asked to start transfer and we're in sending mode
-        bool start = (value & 0x80) && !linkid && !transfer_direction;
+        bool start = (value & 0x80) && !linkid && (transfer_state == 0);
+
+        if ((value & 0x80) && (transfer_state != 0)) {
+            printf("trying to initiate send while sending\n");
+        }
 
         // clear start, seqno, si (RO on slave, start = pulse on master)
-        value &= 0xff4b;
+        // Clear error bit
+        value &= 0xff0b;
 
         // get current si.  This way, on slaves, it is low during xfer
         if (linkid) {
@@ -4341,14 +4346,23 @@ static void StartArduino(uint16_t value)
         }
 
         if (start) {
-            cable_data[0] = READ16LE(&ioMem[COMM_SIODATA8]);
+            cable_data[0] = READ16LE(&ioMem[COMM_SIOMLT_SEND]);
+            cable_data[1] = 0xffff;
             tspeed = value & 3;
+
+            uint16_t value = 0;
+            if (last_transfer_failed) {
+                if (ReceiveFromArduino(&value)) {
+                    printf("managed to read before write, very bad!!!!\n");
+                }
+
+                last_transfer_failed = false;
+            }
 
             SendToArduino(0, cable_data[0]);
             Sleep(3);
 
-            UPDATE_REG(COMM_SIOMULTI0, 0xffff);
-            UPDATE_REG(COMM_SIOMULTI1, 0xffff);
+            WRITE32LE(&ioMem[COMM_SIOMULTI0], 0xffffffff);
             WRITE32LE(&ioMem[COMM_SIOMULTI2], 0xffffffff);
             // Remove error (bit 6)
             value &= ~0x40;
@@ -4358,14 +4372,17 @@ static void StartArduino(uint16_t value)
             // passed for the GBA.
             linktime = 0;
 
+            transfer_state = 1;
+
             arduino_sending = true;
-            //printf("Send: %04x\n", cable_data[0]);
+            done = false;
+            printf("Send: %04x\n", cable_data[0]);
         }
 
         // TODO orp: I think that the following line is confusing. It should be
         // set for both master and slave. Currently it is, but by "chance".
         // TODO: Original - value |= (!transfer_direction ? 1 : 0) << 7;
-        value |= (start || arduino_sending ? 1 : 0) << 7;
+        value |= ((transfer_state > 0) ? 1 : 0) << 7;
         // TODO orp: If the slaves tell the master that it cannot send
         // because they are not ready then we don't have this feature.
         // There's currently no way for the slave to signal this to
@@ -4386,15 +4403,16 @@ static void StartArduino(uint16_t value)
             // not sure why SO low otherwise
             // Original: UPDATE_REG(COMM_RCNT, transfer_direction ? 2 : 3);
             //UPDATE_REG(COMM_RCNT, start || arduino_sending ? 2 : 3);
-            UPDATE_REG(COMM_RCNT, transfer_direction ? 2 : 3);
+            UPDATE_REG(COMM_RCNT, transfer_direction ? 2 : 0xb);
 
+        //printf("set multiboot start %04x, send = %04x\n", value, cable_data[0]);
         break;
     }
     case NORMAL8:
     case NORMAL32:
     case UART:
     default:
-        printf("Went to a different communication mode: %04x\n", GetSIOMode(value, READ16LE(&ioMem[COMM_RCNT])));
+        printf("Went to a different communication mode: %04x %04x, send = %04x\n", value, READ16LE(&ioMem[COMM_RCNT]), READ16LE(&ioMem[COMM_SIODATA8]) & 0xffff);
         // TODO orp: it seems that here I need to cancel the communciation mode.
         // I could possibly set SD to low here.
         UPDATE_REG(COMM_SIOCNT, value);
@@ -4409,76 +4427,80 @@ static void SetDataArduino(uint16_t value)
     // master initiates the sending.
     //cable_data[linkid] = value;
 
+    //if (value == 0x6200) {
+    //    value = 0x6202;
+    //}
+
     //printf("Sending data to Arduino: %04x\n", value);
-        //SendToArduino(0, value);
-        //SendToArduino(1, 0);
+    //SendToArduino(0, value);
+    //SendToArduino(1, 0);
+    UPDATE_REG(COMM_SIODATA8, value);
 }
 
 static void UpdateArduino(int ticks)
 {
-    if (!arduino_sending)
-        return;
-
-    /*
-    if (linkid && transfer_direction == SENDING) {
-        // Set SIOCNT to busy
-        UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x80);
-
-        //transfer_direction = RECEIVING;
-
-        // TODO orp: I'm not sure what I should do with link time? I think I
-        // should just make sure that I get the data after enough time has
-        // passed for the GBA.
-        linktime = 0;
-    }*/
-
-    if (transfer_direction == SENDING && linktime >= trtimedata[0][tspeed]) {
+    //if (transfer_direction == SENDING && linktime >= trtimedata[0][tspeed]) {
+    if ((transfer_state == 1) && (linktime >= trtimedata[0][tspeed])) {
         // Master finished sending to slave
         UPDATE_REG(COMM_SIOMULTI0, cable_data[0]);
         // Only SD is high now
         UPDATE_REG(COMM_RCNT, 0x2);
         transfer_direction = RECEIVING;
+        transfer_state++;
     }
 
-    if (transfer_direction == RECEIVING && linktime >= trtimeend[1 - 1][tspeed]) {
-        // Transfer is completely done
-        if (linkid) {
-            uint16_t arduino_value = 0;
-            if (ReceiveFromArduino(&arduino_value)) {
-                cable_data[0] = arduino_value;
-                // Ready for next send
-                SendToArduino(1, 0);
-            } else {
-                //linktime = 0;
-                //Sleep(0);
-                //cable_data[0] = 0xffff;
-                //SendToArduino('b', 0);
-                return;
-            }
-            //printf("Received data from Arduino as slave: %04x\n", cable_data[0]);
+    if ((transfer_state == 2) && (linktime >= trtimedata[1][tspeed])) {
+
+    //if (transfer_direction == RECEIVING && linktime >= trtimedata[1][tspeed] && !done) {
+        uint16_t arduino_value = 0;
+        printf("about to receive... ");
+        if (ReceiveFromArduino(&arduino_value)) {
+            cable_data[1] = arduino_value;
+            arduino_sending = false;
+            printf("send/receive: %04x %04x\n", cable_data[0], cable_data[1]);
+
+            transfer_state++;
         } else {
-            uint16_t arduino_value = 0;
-            //printf("about to receive\n");
-            if (ReceiveFromArduino(&arduino_value)) {
-                cable_data[1] = arduino_value;
-            } else {
-                // TODO orp: This is the current error handling. We might need
-                // to make this smarter.
-                //cable_data[1] = 0xffff;
-                //UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x40);
-                //linktime = trtimedata[0][tspeed];
-                return;
-                // TODO orp: consider error handling (for the GBA)
-            }
-            //printf("receive: %04x\n", cable_data[1]);
+            // TODO orp: This is the current error handling. We might need
+            // to make this smarter.
+            //cable_data[1] = 0xffff;
+            //UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x40);
+            //printf("error in receive\n");
+            //UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x40);
+            //linktime = trtimedata[0][tspeed];
+            // TODO orp: consider error handling (for the GBA)
+            //linktime = 0;
         }
+        printf("done\n");
+
+        done = true;
+    }
+
+    if ((transfer_state == 2) && (linktime >= trtimeend[0][tspeed])) {
+        printf("transfer_state 2 and transfer should have finished already\n");
+        // Error in sending
+        cable_data[1] = 0xffff;
+        UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x40);
+        last_transfer_failed = true;
+        transfer_state++;
+    }
+
+    if ((transfer_state == 3) && (linktime >= trtimeend[0][tspeed])) {
+    //if (transfer_direction == RECEIVING && linktime >= trtimeend[0][tspeed]) {
+        // Transfer is completely done
+        /*if (arduino_sending) {
+            // Timeout in sending
+            cable_data[1] = 0xffff;
+            UPDATE_REG(COMM_SIOCNT, READ16LE(&ioMem[COMM_SIOCNT]) | 0x40);
+            arduino_sending = false;
+        }*/
 
         if (READ16LE(&ioMem[COMM_SIOCNT]) & 0x4000) {
             IF |= 0x80;
             UPDATE_REG(0x202, IF);
         }
 
-        UPDATE_REG(COMM_SIOCNT, (READ16LE(&ioMem[COMM_SIOCNT]) & 0xff0f) | (linkid << 4));
+        UPDATE_REG(COMM_SIOCNT, (READ16LE(&ioMem[COMM_SIOCNT]) & 0xff4f) | (linkid << 4));
         transfer_direction = SENDING;
 
         UPDATE_REG(COMM_SIOMULTI1, cable_data[1]);
@@ -4487,7 +4509,12 @@ static void UpdateArduino(int ticks)
         // SC, SD, SO high, SI low
         UPDATE_REG(COMM_RCNT, 0xb);
 
-        arduino_sending = false;
+        transfer_state = 0;
+
+        // TODO: This is actually interesting. Is this reset or not between transfers?
+        UPDATE_REG(COMM_SIOMLT_SEND, 0xffff);
+
+        //printf("finished successfully %d\n", linktime);
 
         // TODO: In principle we could add support here for multiple slaves, but
         // we'll leave this feature out for the time being.
