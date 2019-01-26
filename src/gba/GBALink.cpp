@@ -547,6 +547,7 @@ int transfer_state = 0;
 static bool arduino_sending = false;
 static bool done = true;
 static bool last_transfer_failed = false;
+uint16_t seq = 0;
 
 inline static int GetSIOMode(uint16_t siocnt, uint16_t rcnt)
 {
@@ -752,20 +753,27 @@ ConnectionState ConnectLinkUpdate(char* const message, size_t size)
 
 void StartGPLink(uint16_t value)
 {
-    UPDATE_REG(COMM_RCNT, value);
+    uint16_t siocnt_value = 0;
+    uint8_t values[100];
+    DWORD asd = 0;
 
     switch (GetSIOMode(READ16LE(&ioMem[COMM_SIOCNT]), value)) {
     case MULTIPLAYER:
-        value &= 0xc0f0;
-        // Set SC, SD, SO - HIGH
-        value |= 0xb;
+        // TODO: I don't know why you have to read a couple of bytes from
+        // the serial after opening it.
+        //ReadFile(serial, (uint8_t *)&values[0], sizeof(values), &asd, NULL);
+        //printf("Read %d bytes after serial was opened\n", asd);
+
+
         if (linkid)
             value |= 4;
+        else
+            // Set SC, SD, SO - HIGH
+            value |= 0xb;
 
-        UPDATE_REG(COMM_RCNT, value);
-        UPDATE_REG(COMM_SIOCNT, ((READ16LE(&ioMem[COMM_SIOCNT]) & 0xff8b) | (linkid ? 0xc : 8) | (linkid << 4)));
+        siocnt_value = ((READ16LE(&ioMem[COMM_SIOCNT]) & 0xff8b) | (linkid ? 0xc : 8) | (linkid << 4));
+
         break;
-
     case GP:
 #if (defined __WIN32__ || defined _WIN32)
         if (GetLinkMode() == LINK_RFU_IPC)
@@ -773,6 +781,13 @@ void StartGPLink(uint16_t value)
 #endif
         break;
     }
+
+    //printf("Writing to RCNT\n");
+    //printf("\tRCNT: %04x\n", value);
+    //printf("\tSIOCNT: %04x\n", siocnt_value);
+
+    UPDATE_REG(COMM_RCNT, value);
+    UPDATE_REG(COMM_SIOCNT, siocnt_value);
 }
 
 void LinkUpdate(int ticks)
@@ -4206,7 +4221,8 @@ static ConnectionState InitArduino()
         return LINK_ERROR;
     }
 
-    params.BaudRate = CBR_256000;  // Setting BaudRate = 115200
+    //params.BaudRate = CBR_256000;  // Setting BaudRate = 115200
+    params.BaudRate = CBR_115200;  // Setting BaudRate = 115200
     params.ByteSize = 8;           // Setting ByteSize = 8
     params.StopBits = ONESTOPBIT;  // Setting StopBits = 1
     params.Parity   = NOPARITY;    // Setting Parity = None
@@ -4249,11 +4265,14 @@ static ConnectionState InitArduino()
 
     printf("Serial opened\n");
 
-    uint16_t value = 0;
+    uint8_t values[100];
     DWORD bytes_read = 0;
     // TODO: I don't know why you have to read a couple of bytes from
     // the serial after opening it.
-    ReadFile(serial, (uint8_t *)&value, sizeof(value), &bytes_read, NULL);
+    ReadFile(serial, (uint8_t *)&values[0], sizeof(values), &bytes_read, NULL);
+    printf("Read %d bytes after serial was opened\n", bytes_read);
+
+    seq = 0;
 
     return LINK_OK;
 }
@@ -4288,13 +4307,29 @@ static void SendToArduino(char command, uint16_t value)
 {
     DWORD bytes_written = 0;
 
-    WriteFile(serial, (uint8_t *)&value, sizeof(value), &bytes_written, NULL);
+    printf("sending seq %d\n", seq);
+    if (!WriteFile(serial, (uint8_t *)&seq, sizeof(seq), &bytes_written, NULL)) {
+        printf("Writing seq to serial failed! %d bytes written\n", bytes_written);
+    }
+
+    if (!WriteFile(serial, (uint8_t *)&value, sizeof(value), &bytes_written, NULL)) {
+        printf("Writing to serial failed! %d bytes written\n", bytes_written);
+    }
+
+    seq++;
 }
 
 bool ReceiveFromArduino(uint16_t *out)
 {
+    uint16_t local_seq = 0;
     DWORD bytes_read = 0;
     int rc = 0;
+
+    ReadFile(serial, (char *)&local_seq, sizeof(local_seq), &bytes_read, NULL);
+
+    if (local_seq != seq - 1) {
+        printf("Sequence mismatch! expected/got: %d, %d\n", seq - 1, local_seq);
+    }
 
     if ((rc = ReadFile(serial, (char *)out, sizeof(*out), &bytes_read, NULL) == 0) ||
         (bytes_read != sizeof(*out))) {
@@ -4303,7 +4338,7 @@ bool ReceiveFromArduino(uint16_t *out)
         if (dw !=  ERROR_TIMEOUT) {
             // TODO orp: even though timeout might be the actual error from
             // the readfile it doesn't return as such from the function.
-            //fprintf(stderr, "Error reading bytes from serial (rc=%d, bytes read=%d, error=%d)\n", rc, bytes_read, dw);
+            //printf("Error reading bytes from serial (rc=%d, bytes read=%d, error=%d)\n", rc, bytes_read, dw);
             //printf("timeout");
         }
 
@@ -4323,6 +4358,7 @@ static void StartArduino(uint16_t value)
 
     switch (GetSIOMode(value, READ16LE(&ioMem[COMM_RCNT]))) {
     case MULTIPLAYER: {
+        printf("StartArduino (%04x):\n", value);
         //printf("Got value for SIOCNT=%04x\n", value);
         //printf("transfer_direction=%s\n", !transfer_direction ? "sending" : "receiving");
         //printf("start transfer=%s\n", value & 0x80 ? "true" : "false");
@@ -4337,35 +4373,26 @@ static void StartArduino(uint16_t value)
         // Clear error bit
         value &= 0xff0b;
 
-        // get current si.  This way, on slaves, it is low during xfer
-        if (linkid) {
-            if (transfer_direction == SENDING)
-                value |= 4;
-            else
-                value |= READ16LE(&ioMem[COMM_SIOCNT]) & 4;
-        }
-
         if (start) {
             cable_data[0] = READ16LE(&ioMem[COMM_SIOMLT_SEND]);
             cable_data[1] = 0xffff;
             tspeed = value & 3;
 
             uint16_t value = 0;
-            if (last_transfer_failed) {
-                if (ReceiveFromArduino(&value)) {
-                    printf("managed to read before write, very bad!!!!\n");
-                }
+            //if (last_transfer_failed) {
+                //if (ReceiveFromArduino(&value)) {
+                //    printf("managed to read before write, very bad!!!!\n");
+                //}
 
-                last_transfer_failed = false;
-            }
+            //    last_transfer_failed = false;
+            //}
 
             SendToArduino(0, cable_data[0]);
+            // TODO: Don't know why but this sleep is essential here!
             Sleep(3);
 
             WRITE32LE(&ioMem[COMM_SIOMULTI0], 0xffffffff);
             WRITE32LE(&ioMem[COMM_SIOMULTI2], 0xffffffff);
-            // Remove error (bit 6)
-            value &= ~0x40;
 
             // TODO orp: I'm not sure what I should do with link time? I think I
             // should just make sure that I get the data after enough time has
@@ -4376,7 +4403,7 @@ static void StartArduino(uint16_t value)
 
             arduino_sending = true;
             done = false;
-            printf("Send: %04x\n", cable_data[0]);
+            //printf("Send: %04x\n", cable_data[0]);
         }
 
         // TODO orp: I think that the following line is confusing. It should be
@@ -4387,23 +4414,15 @@ static void StartArduino(uint16_t value)
         // because they are not ready then we don't have this feature.
         // There's currently no way for the slave to signal this to
         // the master.
-        value |= (linkid && !transfer_direction) ? 0x0c : 0x08; // set SD (high), SI (low on master)
-        value |= linkid << 4; // set seq
+        value |= 0x08;  // set busy bit
 
-        //printf("Setting SIOCNT: %04x\n", value);
+        //printf("\tSetting SIOCNT: %04x\n", value);
         UPDATE_REG(COMM_SIOCNT, value);
 
-        if (linkid)
-            // SC low -> transfer in progress
-            // not sure why SO is low
-            UPDATE_REG(COMM_RCNT, transfer_direction ? 6 : 7);
-        else
-            // SI is always low on master
-            // SO, SC always low during transfer
-            // not sure why SO low otherwise
-            // Original: UPDATE_REG(COMM_RCNT, transfer_direction ? 2 : 3);
-            //UPDATE_REG(COMM_RCNT, start || arduino_sending ? 2 : 3);
-            UPDATE_REG(COMM_RCNT, transfer_direction ? 2 : 0xb);
+        uint16_t new_rcnt = 0;
+        new_rcnt |= (transfer_state == 0) ? 0xb : 8;
+        //printf("\tSetting RCNT: %04x\n", new_rcnt);
+        UPDATE_REG(COMM_RCNT, new_rcnt);
 
         //printf("set multiboot start %04x, send = %04x\n", value, cable_data[0]);
         break;
@@ -4415,7 +4434,7 @@ static void StartArduino(uint16_t value)
         printf("Went to a different communication mode: %04x %04x, send = %04x\n", value, READ16LE(&ioMem[COMM_RCNT]), READ16LE(&ioMem[COMM_SIODATA8]) & 0xffff);
         // TODO orp: it seems that here I need to cancel the communciation mode.
         // I could possibly set SD to low here.
-        UPDATE_REG(COMM_SIOCNT, value);
+        //UPDATE_REG(COMM_SIOCNT, value);
         break;
     }
 }
@@ -4439,28 +4458,28 @@ static void SetDataArduino(uint16_t value)
 
 static void UpdateArduino(int ticks)
 {
-    //if (transfer_direction == SENDING && linktime >= trtimedata[0][tspeed]) {
     if ((transfer_state == 1) && (linktime >= trtimedata[0][tspeed])) {
         // Master finished sending to slave
         UPDATE_REG(COMM_SIOMULTI0, cable_data[0]);
-        // Only SD is high now
-        UPDATE_REG(COMM_RCNT, 0x2);
+
+        // All low
+        UPDATE_REG(COMM_RCNT, 0);
         transfer_direction = RECEIVING;
         transfer_state++;
     }
 
     if ((transfer_state == 2) && (linktime >= trtimedata[1][tspeed])) {
-
-    //if (transfer_direction == RECEIVING && linktime >= trtimedata[1][tspeed] && !done) {
         uint16_t arduino_value = 0;
-        printf("about to receive... ");
         if (ReceiveFromArduino(&arduino_value)) {
             cable_data[1] = arduino_value;
             arduino_sending = false;
             printf("send/receive: %04x %04x\n", cable_data[0], cable_data[1]);
 
+            UPDATE_REG(COMM_RCNT, 0xa);
+
             transfer_state++;
         } else {
+            printf("timed out when expected to get data!");
             // TODO orp: This is the current error handling. We might need
             // to make this smarter.
             //cable_data[1] = 0xffff;
@@ -4471,7 +4490,6 @@ static void UpdateArduino(int ticks)
             // TODO orp: consider error handling (for the GBA)
             //linktime = 0;
         }
-        printf("done\n");
 
         done = true;
     }
@@ -4501,7 +4519,6 @@ static void UpdateArduino(int ticks)
         }
 
         UPDATE_REG(COMM_SIOCNT, (READ16LE(&ioMem[COMM_SIOCNT]) & 0xff4f) | (linkid << 4));
-        transfer_direction = SENDING;
 
         UPDATE_REG(COMM_SIOMULTI1, cable_data[1]);
 
@@ -4512,7 +4529,7 @@ static void UpdateArduino(int ticks)
         transfer_state = 0;
 
         // TODO: This is actually interesting. Is this reset or not between transfers?
-        UPDATE_REG(COMM_SIOMLT_SEND, 0xffff);
+        //UPDATE_REG(COMM_SIOMLT_SEND, 0xffff);
 
         //printf("finished successfully %d\n", linktime);
 
