@@ -262,6 +262,7 @@ static void StartRFUSocket(uint16_t siocnt);
 bool LinkRFUUpdateSocket();
 static void UpdateRFUSocket(int ticks);
 
+static void ArduinoPurgeAll();
 static ConnectionState InitArduino();
 static void StartArduino(uint16_t siocnt);
 static void SetDataArduino(uint16_t siodata8);
@@ -763,6 +764,8 @@ void StartGPLink(uint16_t value)
         // the serial after opening it.
         //ReadFile(serial, (uint8_t *)&values[0], sizeof(values), &asd, NULL);
         //printf("Read %d bytes after serial was opened\n", asd);
+
+        ArduinoPurgeAll();
 
 
         if (linkid)
@@ -4198,6 +4201,11 @@ static void CloseIPC()
 #endif
 }
 
+static void ArduinoPurgeAll()
+{
+    PurgeComm(serial, PURGE_RXABORT | PURGE_RXCLEAR | PURGE_TXABORT | PURGE_TXCLEAR);
+}
+
 static ConnectionState InitArduino()
 {
     // TODO orp: Right now we only support the emulator being the slave
@@ -4226,6 +4234,9 @@ static ConnectionState InitArduino()
     params.ByteSize = 8;           // Setting ByteSize = 8
     params.StopBits = ONESTOPBIT;  // Setting StopBits = 1
     params.Parity   = NOPARITY;    // Setting Parity = None
+    /* DOn't know if this is good? */
+    params.fRtsControl = RTS_CONTROL_DISABLE;
+    params.fDtrControl = DTR_CONTROL_DISABLE;
 
     if (SetCommState(serial, &params) == 0) {
         CloseHandle(serial);
@@ -4242,7 +4253,7 @@ static ConnectionState InitArduino()
     timeouts.WriteTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 0;
 */
-    timeouts.ReadIntervalTimeout = 10;
+    timeouts.ReadIntervalTimeout = 0;
     timeouts.ReadTotalTimeoutConstant = 0;
     timeouts.ReadTotalTimeoutMultiplier = 5;
     timeouts.WriteTotalTimeoutConstant = 0;
@@ -4264,6 +4275,8 @@ static ConnectionState InitArduino()
     Sleep(2000);
 
     printf("Serial opened\n");
+
+    ArduinoPurgeAll();
 
     uint8_t values[100];
     DWORD bytes_read = 0;
@@ -4307,7 +4320,7 @@ static void SendToArduino(char command, uint16_t value)
 {
     DWORD bytes_written = 0;
 
-    printf("sending seq %d\n", seq);
+    //printf("sending seq %d\n", seq);
     if (!WriteFile(serial, (uint8_t *)&seq, sizeof(seq), &bytes_written, NULL)) {
         printf("Writing seq to serial failed! %d bytes written\n", bytes_written);
     }
@@ -4315,6 +4328,10 @@ static void SendToArduino(char command, uint16_t value)
     if (!WriteFile(serial, (uint8_t *)&value, sizeof(value), &bytes_written, NULL)) {
         printf("Writing to serial failed! %d bytes written\n", bytes_written);
     }
+
+    // TODO: Not sure this is necessary as the code seems to be already quite
+    // quick.
+    FlushFileBuffers(serial);
 
     seq++;
 }
@@ -4358,7 +4375,7 @@ static void StartArduino(uint16_t value)
 
     switch (GetSIOMode(value, READ16LE(&ioMem[COMM_RCNT]))) {
     case MULTIPLAYER: {
-        printf("StartArduino (%04x):\n", value);
+        //printf("StartArduino (%04x):\n", value);
         //printf("Got value for SIOCNT=%04x\n", value);
         //printf("transfer_direction=%s\n", !transfer_direction ? "sending" : "receiving");
         //printf("start transfer=%s\n", value & 0x80 ? "true" : "false");
@@ -4389,7 +4406,9 @@ static void StartArduino(uint16_t value)
 
             SendToArduino(0, cable_data[0]);
             // TODO: Don't know why but this sleep is essential here!
-            Sleep(3);
+            // OK, it's not essential. What's essential is to reset the
+            // emulator from time to time.
+            //Sleep(3);
 
             WRITE32LE(&ioMem[COMM_SIOMULTI0], 0xffffffff);
             WRITE32LE(&ioMem[COMM_SIOMULTI2], 0xffffffff);
@@ -4435,6 +4454,7 @@ static void StartArduino(uint16_t value)
         // TODO orp: it seems that here I need to cancel the communciation mode.
         // I could possibly set SD to low here.
         //UPDATE_REG(COMM_SIOCNT, value);
+        ArduinoPurgeAll();
         break;
     }
 }
@@ -4473,7 +4493,7 @@ static void UpdateArduino(int ticks)
         if (ReceiveFromArduino(&arduino_value)) {
             cable_data[1] = arduino_value;
             arduino_sending = false;
-            printf("send/receive: %04x %04x\n", cable_data[0], cable_data[1]);
+            //printf("send/receive: %04x %04x\n", cable_data[0], cable_data[1]);
 
             UPDATE_REG(COMM_RCNT, 0xa);
 
