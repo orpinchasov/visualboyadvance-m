@@ -549,6 +549,8 @@ static bool arduino_sending = false;
 static bool done = true;
 static bool last_transfer_failed = false;
 uint16_t seq = 0;
+int rp_socket = 0;
+struct sockaddr_in si_me, si_other;
 
 inline static int GetSIOMode(uint16_t siocnt, uint16_t rcnt)
 {
@@ -4211,7 +4213,7 @@ static ConnectionState InitArduino()
     // TODO orp: Right now we only support the emulator being the slave
     // we should add support for master as well.
     //linkid = 1;
-
+#if 0
     // TODO orp: I'm now implementing the master
     linkid = 0;
 
@@ -4287,6 +4289,36 @@ static ConnectionState InitArduino()
 
     seq = 0;
 
+#endif
+
+    WSADATA w;
+
+    /* Open windows connection */
+    if (WSAStartup(0x0101, &w) != 0) {
+        fprintf(stderr, "Could not open Windows connection.\n");
+        return LINK_ERROR;
+    }
+
+    /* Open a datagram socket */
+    rp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (rp_socket == INVALID_SOCKET) {
+        fprintf(stderr, "Could not create socket.\n");
+        WSACleanup();
+        return LINK_ERROR;
+    }
+    memset((char *) &si_me, 0, sizeof(si_me));
+    si_me.sin_family = AF_INET;
+    si_me.sin_port = htons(6556);
+    si_me.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(rp_socket, (struct sockaddr *)&si_me, sizeof(si_me))==-1) {
+        printf("bind failed.\n\n" );
+        return LINK_ERROR;
+    }
+
+    si_other.sin_family = AF_INET;
+    si_other.sin_addr.s_addr = inet_addr("192.168.14.81");
+    si_other.sin_port = htons(6556);
+
     return LINK_OK;
 }
 
@@ -4318,6 +4350,7 @@ static void SendToArduino2(char command, uint16_t value)
 
 static void SendToArduino(char command, uint16_t value)
 {
+#if 0
     DWORD bytes_written = 0;
 
     //printf("sending seq %d\n", seq);
@@ -4334,10 +4367,16 @@ static void SendToArduino(char command, uint16_t value)
     FlushFileBuffers(serial);
 
     seq++;
+
+#endif
+
+    int slen=sizeof(si_other);
+    sendto(rp_socket, (char *)&value, sizeof(value), 0, (struct sockaddr *)&si_other, slen);
 }
 
 bool ReceiveFromArduino(uint16_t *out)
 {
+#if 0
     uint16_t local_seq = 0;
     DWORD bytes_read = 0;
     int rc = 0;
@@ -4361,6 +4400,11 @@ bool ReceiveFromArduino(uint16_t *out)
 
         return false;
     }
+
+#endif
+
+    int slen=sizeof(si_other);
+    recvfrom(rp_socket, (char *)out, sizeof(*out), 0, (struct sockaddr *)&si_other, &slen);
 
     return true;
 }
